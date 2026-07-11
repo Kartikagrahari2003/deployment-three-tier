@@ -1,5 +1,5 @@
 pipeline{
-    agent {'electronix'}
+    agent { label 'electronix'}
 
     stages{
         stage("I am from Electronix"){

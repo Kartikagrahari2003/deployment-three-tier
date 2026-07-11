@@ -26,19 +26,19 @@ pipeline {
             }
         }
         stage('Install AWS CLI') {
-            steps {
-                sh '''
-                    if ! command -v aws &> /dev/null; then
-                        sudo apt-get install -y unzip curl
-                        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                        unzip -o awscliv2.zip
-                        sudo ./aws/install
-                        rm -rf awscliv2.zip aws/
-                    fi
-                    aws --version
-                '''
-            }
-        }
+    steps {
+        sh '''
+            if ! command -v aws &> /dev/null; then
+                sudo apt-get install -y unzip curl
+                curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                unzip -o awscliv2.zip
+                sudo ./aws/install || sudo ./aws/install --update
+                rm -rf awscliv2.zip aws/
+            fi
+            aws --version
+        '''
+    }
+}
         stage('Install Docker') {
             steps {
                 sh '''

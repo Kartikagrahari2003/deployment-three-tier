@@ -9,12 +9,6 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
-            steps {
-                git branch: 'main', url: 'https://github.com/DEVENDRA-5470/banking-app-2-tier.git'
-            }
-        }
-
         stage('Frontend Pipeline') {
             when {
                 changeset "frontend/**"

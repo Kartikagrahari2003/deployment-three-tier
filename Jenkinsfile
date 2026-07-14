@@ -3,7 +3,7 @@ pipeline{
 
     environment{
         S3_BUCKET='terraform-in-one-shot2003'
-        CLOUDFRONT_ID=E35OG02Q367R3C'
+        CLOUDFRONT_ID='E35OG02Q367R3C'
         AWS_REGION='ap-south-2'
     }
 

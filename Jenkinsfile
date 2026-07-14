@@ -64,11 +64,11 @@ pipeline{
 
     post{
         success{
-            'Frontent Deployment Successfull ✅'
+            echo 'Frontent Deployment Successfull ✅'
         }
 
         failure {
-            'Frontent Deployment Failed ❌'
+           echo 'Frontent Deployment Failed ❌'
         }
     }
 }

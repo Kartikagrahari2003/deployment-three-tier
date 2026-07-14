@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
@@ -16,9 +16,20 @@ function resolveImageSrc(src) {
   return null;
 }
 
-function CheckoutItemImage({ src, alt }) {
+/* Memoized so re-renders of the parent (e.g. selecting a different
+   address, which updates state) don't touch these image elements —
+   only a genuine src change re-triggers the load/status logic. */
+const CheckoutItemImage = memo(function CheckoutItemImage({ src, alt }) {
   const resolvedSrc = resolveImageSrc(src);
   const [status, setStatus] = useState(resolvedSrc ? 'loading' : 'empty');
+
+  // Bug fix: previously `status` was initialized once from `resolvedSrc`
+  // but never reset if `src` changed later (e.g. cart contents change
+  // after checkout is already open) — the image would keep showing
+  // stale loading/error state. This keeps status in sync with src.
+  useEffect(() => {
+    setStatus(resolvedSrc ? 'loading' : 'empty');
+  }, [resolvedSrc]);
 
   if (status === 'empty') {
     return (
@@ -39,6 +50,8 @@ function CheckoutItemImage({ src, alt }) {
       <img
         src={resolvedSrc}
         alt={alt}
+        loading="lazy"
+        decoding="async"
         onLoad={() => setStatus('loaded')}
         onError={() => setStatus('error')}
         className={`w-full h-full object-cover transition-opacity duration-300 ${
@@ -47,7 +60,73 @@ function CheckoutItemImage({ src, alt }) {
       />
     </>
   );
-}
+});
+
+/* Extracted so selecting an address only re-renders the (at most two)
+   cards whose isSelected value actually flipped, not the whole list. */
+const AddressCard = memo(function AddressCard({ address, isSelected, onSelect }) {
+  return (
+    <label
+      className={`flex items-start gap-3 rounded-xl p-4 cursor-pointer transition-all duration-200 ring-1 ${
+        isSelected
+          ? 'ring-teal bg-teal/[0.06]'
+          : 'ring-border-line hover:ring-teal/40 bg-surface-hover/40'
+      }`}
+    >
+      <span
+        className={`relative w-4 h-4 rounded-full border-2 shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+          isSelected ? 'border-teal' : 'border-border-line'
+        }`}
+      >
+        {isSelected && <span className="w-2 h-2 rounded-full bg-teal" />}
+      </span>
+      <input
+        type="radio"
+        name="address"
+        checked={isSelected}
+        onChange={() => onSelect(address._id)}
+        className="sr-only"
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-text-primary font-semibold text-sm">{address.label}</span>
+          {address.isDefault && (
+            <span className="text-teal text-[10px] font-semibold bg-teal/10 px-1.5 py-0.5 rounded-full">Default</span>
+          )}
+        </div>
+        <p className="text-text-primary text-sm">{address.fullName}</p>
+        <p className="text-text-muted text-xs mt-0.5 leading-relaxed">
+          {address.street}, {address.city}, {address.state} {address.postalCode}
+        </p>
+        <p className="text-text-muted text-xs">{address.phone}</p>
+      </div>
+      {isSelected && (
+        <Check size={16} className="text-teal shrink-0" strokeWidth={2.5} />
+      )}
+    </label>
+  );
+});
+
+const CartItemRow = memo(function CartItemRow({ item }) {
+  const unitPrice = item.product?.discountPrice || item.product?.price || 0;
+  const lineTotal = unitPrice * item.quantity;
+  return (
+    <div className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
+      <div className="relative w-14 h-14 bg-surface-hover rounded-lg overflow-hidden shrink-0 ring-1 ring-border-line">
+        <CheckoutItemImage src={item.product?.images?.[0]} alt={item.product?.name} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-text-primary text-sm font-medium truncate">{item.product?.name}</p>
+        <p className="text-text-muted text-xs mt-0.5">
+          Qty {item.quantity} {item.quantity > 1 && `· ₹${unitPrice.toLocaleString('en-IN')} each`}
+        </p>
+      </div>
+      <p className="text-text-primary text-sm font-semibold tabular-nums shrink-0">
+        ₹{lineTotal.toLocaleString('en-IN')}
+      </p>
+    </div>
+  );
+});
 
 function Checkout() {
   const { user } = useAuth();
@@ -78,9 +157,14 @@ function Checkout() {
   }, [user]);
 
   const shippingPrice = totalPrice >= 999 ? 0 : 49;
-  const grandTotal = totalPrice + shippingPrice;
+  const grandTotal = useMemo(() => totalPrice + shippingPrice, [totalPrice, shippingPrice]);
 
-  const handlePlaceOrder = async () => {
+  // Stable identity so AddressCard's memo() holds across re-renders.
+  const handleSelectAddress = useCallback((id) => {
+    setSelectedAddressId(id);
+  }, []);
+
+  const handlePlaceOrder = useCallback(async () => {
     if (!selectedAddressId) {
       setError('Please select a delivery address');
       return;
@@ -132,7 +216,7 @@ function Checkout() {
       setError(err.response?.data?.message || 'Could not start checkout');
       setPlacing(false);
     }
-  };
+  }, [selectedAddressId, itemCount, user, refreshCart, navigate]);
 
   if (!user) {
     return (
@@ -202,50 +286,14 @@ function Checkout() {
               )}
 
               <div className="space-y-3">
-                {addresses.map((addr) => {
-                  const isSelected = selectedAddressId === addr._id;
-                  return (
-                    <label
-                      key={addr._id}
-                      className={`flex items-start gap-3 rounded-xl p-4 cursor-pointer transition-all duration-200 ring-1 ${
-                        isSelected
-                          ? 'ring-teal bg-teal/[0.06]'
-                          : 'ring-border-line hover:ring-teal/40 bg-surface-hover/40'
-                      }`}
-                    >
-                      <span
-                        className={`relative w-4 h-4 rounded-full border-2 shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
-                          isSelected ? 'border-teal' : 'border-border-line'
-                        }`}
-                      >
-                        {isSelected && <span className="w-2 h-2 rounded-full bg-teal" />}
-                      </span>
-                      <input
-                        type="radio"
-                        name="address"
-                        checked={isSelected}
-                        onChange={() => setSelectedAddressId(addr._id)}
-                        className="sr-only"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-text-primary font-semibold text-sm">{addr.label}</span>
-                          {addr.isDefault && (
-                            <span className="text-teal text-[10px] font-semibold bg-teal/10 px-1.5 py-0.5 rounded-full">Default</span>
-                          )}
-                        </div>
-                        <p className="text-text-primary text-sm">{addr.fullName}</p>
-                        <p className="text-text-muted text-xs mt-0.5 leading-relaxed">
-                          {addr.street}, {addr.city}, {addr.state} {addr.postalCode}
-                        </p>
-                        <p className="text-text-muted text-xs">{addr.phone}</p>
-                      </div>
-                      {isSelected && (
-                        <Check size={16} className="text-teal shrink-0" strokeWidth={2.5} />
-                      )}
-                    </label>
-                  );
-                })}
+                {addresses.map((addr) => (
+                  <AddressCard
+                    key={addr._id}
+                    address={addr}
+                    isSelected={selectedAddressId === addr._id}
+                    onSelect={handleSelectAddress}
+                  />
+                ))}
               </div>
             </div>
 
@@ -257,26 +305,9 @@ function Checkout() {
               </div>
 
               <div className="divide-y divide-border-line">
-                {cart.items.map((item) => {
-                  const unitPrice = item.product?.discountPrice || item.product?.price || 0;
-                  const lineTotal = unitPrice * item.quantity;
-                  return (
-                    <div key={item.product?._id} className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
-                      <div className="relative w-14 h-14 bg-surface-hover rounded-lg overflow-hidden shrink-0 ring-1 ring-border-line">
-                        <CheckoutItemImage src={item.product?.images?.[0]} alt={item.product?.name} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-text-primary text-sm font-medium truncate">{item.product?.name}</p>
-                        <p className="text-text-muted text-xs mt-0.5">
-                          Qty {item.quantity} {item.quantity > 1 && `· ₹${unitPrice.toLocaleString('en-IN')} each`}
-                        </p>
-                      </div>
-                      <p className="text-text-primary text-sm font-semibold tabular-nums shrink-0">
-                        ₹{lineTotal.toLocaleString('en-IN')}
-                      </p>
-                    </div>
-                  );
-                })}
+                {cart.items.map((item) => (
+                  <CartItemRow key={item.product?._id} item={item} />
+                ))}
               </div>
             </div>
           </div>

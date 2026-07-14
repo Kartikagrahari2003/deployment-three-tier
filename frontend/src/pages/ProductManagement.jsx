@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { createProduct, bulkCreateProducts, getProducts } from '../api/productApi';
 import { getAllOrdersAdmin, updateOrderStatusAdmin, getSalesAnalytics } from '../api/orderApi';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
@@ -34,7 +34,41 @@ const getProductStatus = (stock) => {
 
 const PAGE_SIZE = 8;
 
-function PaginationBar({ currentPage, totalPages, onPageChange, totalItems, pageSize }) {
+/* ------------------------------------------------------------------ */
+/* IMPORTANT: These were previously defined INSIDE                     */
+/* ProductManagementDashboard. That meant every re-render (e.g. every  */
+/* single keystroke in the form, via handleChange -> setState) created */
+/* a brand-new function reference for Spinner/FieldInput. React treats */
+/* a new function reference as a totally different component type, so  */
+/* it unmounted and remounted every <input> on every keystroke —       */
+/* causing the input to lose focus/cursor position and re-doing all of */
+/* React's mount work each time you typed a character. Moving them to  */
+/* module scope (defined once, ever) fixes this completely.            */
+/* ------------------------------------------------------------------ */
+const Spinner = memo(function Spinner({ className = 'h-4 w-4' }) {
+  return (
+    <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  );
+});
+
+const FieldInput = memo(function FieldInput({ icon, ...props }) {
+  return (
+    <div className="relative">
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-sm pointer-events-none">
+        {icon}
+      </span>
+      <input
+        {...props}
+        className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-graphite border border-border-line text-text-primary placeholder-text-muted/60 focus:outline-none focus:border-teal focus:ring-1 focus:ring-teal/20 transition-all text-sm"
+      />
+    </div>
+  );
+});
+
+const PaginationBar = memo(function PaginationBar({ currentPage, totalPages, onPageChange, totalItems, pageSize }) {
   if (totalPages <= 1) return null;
 
   const start = (currentPage - 1) * pageSize + 1;
@@ -92,7 +126,7 @@ function PaginationBar({ currentPage, totalPages, onPageChange, totalItems, page
       </div>
     </div>
   );
-}
+});
 
 function CustomChartTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
@@ -103,6 +137,102 @@ function CustomChartTooltip({ active, payload, label }) {
     </div>
   );
 }
+
+/* Product table row and order table row pulled into their own memoized
+   components. With only 8 rows per page this isn't the biggest win here,
+   but it stops every row from re-rendering when, say, one order's status
+   dropdown changes and only that row's data actually changed. */
+const ProductRow = memo(function ProductRow({ product }) {
+  const status = getProductStatus(product.stock);
+  const statusBadgeClass =
+    status === 'out-of-stock'
+      ? 'bg-surface-hover text-text-muted border-border-line'
+      : status === 'low-stock'
+      ? 'bg-amber/10 text-amber border-amber/30'
+      : 'bg-teal/10 text-teal border-teal/30';
+  return (
+    <tr className="border-b border-border-line/50 last:border-0 hover:bg-surface-hover transition-colors">
+      <td className="px-5 py-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-graphite border border-border-line overflow-hidden shrink-0">
+            {product.images?.[0] && (
+              <img
+                src={product.images[0]}
+                alt={product.name}
+                loading="lazy"
+                decoding="async"
+                className="w-full h-full object-cover"
+              />
+            )}
+          </div>
+          <span className="text-text-primary font-medium truncate max-w-[180px]">{product.name}</span>
+        </div>
+      </td>
+      <td className="px-5 py-3 text-text-muted font-mono text-xs">{product.sku}</td>
+      <td className="px-5 py-3 text-text-muted capitalize">{product.category}</td>
+      <td className="px-5 py-3 text-text-primary font-medium text-right">
+        ₹{Number(product.price).toLocaleString('en-IN')}
+      </td>
+      <td className="px-5 py-3 text-text-primary text-right">{product.stock}</td>
+      <td className="px-5 py-3 text-center">
+        <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border ${statusBadgeClass}`}>
+          {PRODUCT_STATUS_LABELS[status]}
+        </span>
+      </td>
+    </tr>
+  );
+});
+
+const OrderRow = memo(function OrderRow({ order, isUpdating, onStatusChange }) {
+  const items = order.OrderItems || [];
+  return (
+    <tr className="border-b border-border-line/50 last:border-0 hover:bg-surface-hover transition-colors">
+      <td className="px-5 py-3">
+        <p className="text-text-primary font-medium">#{String(order.id).padStart(8, '0')}</p>
+        <p className="text-text-muted text-xs mt-0.5">
+          {new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+        </p>
+      </td>
+      <td className="px-5 py-3">
+        <p className="text-text-primary text-sm">{order.User?.name || '—'}</p>
+        <p className="text-text-muted text-xs">{order.User?.email || ''}</p>
+      </td>
+      <td className="px-5 py-3 text-text-muted">
+        {items.length} item{items.length !== 1 ? 's' : ''}
+      </td>
+      <td className="px-5 py-3 text-text-primary font-medium text-right">
+        ₹{Number(order.totalPrice).toLocaleString('en-IN')}
+      </td>
+      <td className="px-5 py-3">
+        <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border capitalize ${
+          order.paymentStatus === 'paid'
+            ? 'bg-teal/10 text-teal border-teal/30'
+            : order.paymentStatus === 'failed'
+            ? 'bg-amber/10 text-amber border-amber/30'
+            : 'bg-surface-hover text-text-muted border-border-line'
+        }`}>
+          {order.paymentStatus}
+        </span>
+      </td>
+      <td className="px-5 py-3">
+        <select
+          value={order.orderStatus}
+          disabled={isUpdating}
+          onChange={(e) => onStatusChange(order.id, e.target.value)}
+          className={`text-xs font-medium capitalize px-2.5 py-1.5 rounded-lg border bg-graphite focus:outline-none focus:ring-1 focus:ring-teal/30 transition-colors disabled:opacity-50 ${
+            STATUS_STYLES[order.orderStatus] || STATUS_STYLES.processing
+          }`}
+        >
+          {ORDER_STATUSES.map((s) => (
+            <option key={s} value={s} className="bg-graphite text-text-primary">
+              {s.charAt(0).toUpperCase() + s.slice(1)}
+            </option>
+          ))}
+        </select>
+      </td>
+    </tr>
+  );
+});
 
 function ProductManagementDashboard() {
   const [activeTab, setActiveTab] = useState('products');
@@ -138,6 +268,14 @@ function ProductManagementDashboard() {
   const [analytics, setAnalytics] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(true);
   const [analyticsRange, setAnalyticsRange] = useState(7);
+
+  // Revoke object URLs for image previews on unmount / when replaced,
+  // so the browser doesn't keep leaked blob references around.
+  useEffect(() => {
+    return () => {
+      previews.forEach((src) => URL.revokeObjectURL(src));
+    };
+  }, [previews]);
 
   const fetchProducts = async () => {
     setProductsLoading(true);
@@ -194,7 +332,7 @@ function ProductManagementDashboard() {
     setOrderPage(1);
   }, [orderSearch, orderStatusFilter]);
 
-  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+  const handleChange = (e) => setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
   const processFiles = (fileList) => {
     const files = Array.from(fileList).slice(0, 5);
@@ -259,25 +397,6 @@ function ProductManagementDashboard() {
     }
   };
 
-  const Spinner = ({ className = 'h-4 w-4' }) => (
-    <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  );
-
-  const FieldInput = ({ icon, ...props }) => (
-    <div className="relative">
-      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-sm pointer-events-none">
-        {icon}
-      </span>
-      <input
-        {...props}
-        className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-graphite border border-border-line text-text-primary placeholder-text-muted/60 focus:outline-none focus:border-teal focus:ring-1 focus:ring-teal/20 transition-all text-sm"
-      />
-    </div>
-  );
-
   const stats = useMemo(() => {
     const total = products.length;
     const inventoryValue = products.reduce((sum, p) => sum + Number(p.price) * Number(p.stock), 0);
@@ -320,20 +439,20 @@ function ProductManagementDashboard() {
     }, {});
   }, [products]);
 
+  // Single-pass filter (was two chained .filter() calls over the same array).
   const filteredProducts = useMemo(() => {
-    return products
-      .filter((p) => productStatusFilter === 'all' || getProductStatus(p.stock) === productStatusFilter)
-      .filter((p) => {
-        if (!tableSearch.trim()) return true;
-        const q = tableSearch.toLowerCase();
-        const statusLabel = PRODUCT_STATUS_LABELS[getProductStatus(p.stock)].toLowerCase();
-        return (
-          p.name.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q) ||
-          p.category.toLowerCase().includes(q) ||
-          statusLabel.includes(q)
-        );
-      });
+    const q = tableSearch.trim().toLowerCase();
+    return products.filter((p) => {
+      if (productStatusFilter !== 'all' && getProductStatus(p.stock) !== productStatusFilter) return false;
+      if (!q) return true;
+      const statusLabel = PRODUCT_STATUS_LABELS[getProductStatus(p.stock)].toLowerCase();
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q) ||
+        statusLabel.includes(q)
+      );
+    });
   }, [products, tableSearch, productStatusFilter]);
 
   const productTotalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
@@ -349,17 +468,17 @@ function ProductManagementDashboard() {
     }, {});
   }, [orders]);
 
+  // Single-pass filter here too.
   const filteredOrders = useMemo(() => {
-    return orders
-      .filter((o) => orderStatusFilter === 'all' || o.orderStatus === orderStatusFilter)
-      .filter((o) => {
-        if (!orderSearch.trim()) return true;
-        const q = orderSearch.toLowerCase();
-        const idMatch = String(o.id).includes(q);
-        const userMatch = o.User?.name?.toLowerCase().includes(q) || o.User?.email?.toLowerCase().includes(q);
-        const itemMatch = (o.OrderItems || []).some((it) => it.name.toLowerCase().includes(q));
-        return idMatch || userMatch || itemMatch;
-      });
+    const q = orderSearch.trim().toLowerCase();
+    return orders.filter((o) => {
+      if (orderStatusFilter !== 'all' && o.orderStatus !== orderStatusFilter) return false;
+      if (!q) return true;
+      const idMatch = String(o.id).includes(q);
+      const userMatch = o.User?.name?.toLowerCase().includes(q) || o.User?.email?.toLowerCase().includes(q);
+      const itemMatch = (o.OrderItems || []).some((it) => it.name.toLowerCase().includes(q));
+      return idMatch || userMatch || itemMatch;
+    });
   }, [orders, orderSearch, orderStatusFilter]);
 
   const orderTotalPages = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE));
@@ -649,40 +768,9 @@ function ProductManagementDashboard() {
                         </tr>
                       </thead>
                       <tbody>
-                        {paginatedProducts.map((p) => {
-                          const status = getProductStatus(p.stock);
-                          const statusBadgeClass =
-                            status === 'out-of-stock'
-                              ? 'bg-surface-hover text-text-muted border-border-line'
-                              : status === 'low-stock'
-                              ? 'bg-amber/10 text-amber border-amber/30'
-                              : 'bg-teal/10 text-teal border-teal/30';
-                          return (
-                            <tr key={p.id} className="border-b border-border-line/50 last:border-0 hover:bg-surface-hover transition-colors">
-                              <td className="px-5 py-3">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-9 h-9 rounded-lg bg-graphite border border-border-line overflow-hidden shrink-0">
-                                    {p.images?.[0] && (
-                                      <img src={p.images[0]} alt={p.name} className="w-full h-full object-cover" />
-                                    )}
-                                  </div>
-                                  <span className="text-text-primary font-medium truncate max-w-[180px]">{p.name}</span>
-                                </div>
-                              </td>
-                              <td className="px-5 py-3 text-text-muted font-mono text-xs">{p.sku}</td>
-                              <td className="px-5 py-3 text-text-muted capitalize">{p.category}</td>
-                              <td className="px-5 py-3 text-text-primary font-medium text-right">
-                                ₹{Number(p.price).toLocaleString('en-IN')}
-                              </td>
-                              <td className="px-5 py-3 text-text-primary text-right">{p.stock}</td>
-                              <td className="px-5 py-3 text-center">
-                                <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border ${statusBadgeClass}`}>
-                                  {PRODUCT_STATUS_LABELS[status]}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                        {paginatedProducts.map((p) => (
+                          <ProductRow key={p.id} product={p} />
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -766,57 +854,14 @@ function ProductManagementDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedOrders.map((order) => {
-                        const items = order.OrderItems || [];
-                        const isUpdating = updatingOrderId === order.id;
-                        return (
-                          <tr key={order.id} className="border-b border-border-line/50 last:border-0 hover:bg-surface-hover transition-colors">
-                            <td className="px-5 py-3">
-                              <p className="text-text-primary font-medium">#{String(order.id).padStart(8, '0')}</p>
-                              <p className="text-text-muted text-xs mt-0.5">
-                                {new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                              </p>
-                            </td>
-                            <td className="px-5 py-3">
-                              <p className="text-text-primary text-sm">{order.User?.name || '—'}</p>
-                              <p className="text-text-muted text-xs">{order.User?.email || ''}</p>
-                            </td>
-                            <td className="px-5 py-3 text-text-muted">
-                              {items.length} item{items.length !== 1 ? 's' : ''}
-                            </td>
-                            <td className="px-5 py-3 text-text-primary font-medium text-right">
-                              ₹{Number(order.totalPrice).toLocaleString('en-IN')}
-                            </td>
-                            <td className="px-5 py-3">
-                              <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border capitalize ${
-                                order.paymentStatus === 'paid'
-                                  ? 'bg-teal/10 text-teal border-teal/30'
-                                  : order.paymentStatus === 'failed'
-                                  ? 'bg-amber/10 text-amber border-amber/30'
-                                  : 'bg-surface-hover text-text-muted border-border-line'
-                              }`}>
-                                {order.paymentStatus}
-                              </span>
-                            </td>
-                            <td className="px-5 py-3">
-                              <select
-                                value={order.orderStatus}
-                                disabled={isUpdating}
-                                onChange={(e) => handleStatusChange(order.id, e.target.value)}
-                                className={`text-xs font-medium capitalize px-2.5 py-1.5 rounded-lg border bg-graphite focus:outline-none focus:ring-1 focus:ring-teal/30 transition-colors disabled:opacity-50 ${
-                                  STATUS_STYLES[order.orderStatus] || STATUS_STYLES.processing
-                                }`}
-                              >
-                                {ORDER_STATUSES.map((s) => (
-                                  <option key={s} value={s} className="bg-graphite text-text-primary">
-                                    {s.charAt(0).toUpperCase() + s.slice(1)}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {paginatedOrders.map((order) => (
+                        <OrderRow
+                          key={order.id}
+                          order={order}
+                          isUpdating={updatingOrderId === order.id}
+                          onStatusChange={handleStatusChange}
+                        />
+                      ))}
                     </tbody>
                   </table>
                 </div>

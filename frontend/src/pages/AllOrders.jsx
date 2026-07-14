@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import * as orderApi from '../api/orderApi';
-import { Package, ChevronRight, Loader2, ShoppingBag, RefreshCw } from 'lucide-react';
+import { Package, ChevronRight, ShoppingBag, RefreshCw } from 'lucide-react';
 
 const STATUS_STYLES = {
   processing: { label: 'Processing', className: 'bg-amber/10 text-amber border-amber/30' },
@@ -19,6 +19,96 @@ const TAB_DOT_COLORS = {
   cancelled: 'bg-rose-400',
 };
 
+/* Extracted + memoized: previously this whole card was an inline
+   arrow function inside .map(), redefined every render. With it as
+   its own memoized component, clicking Refresh or typing in search
+   no longer forces every unrelated order card to redo its JSX work —
+   only cards whose own `order` prop actually changed re-render. */
+const OrderCard = memo(function OrderCard({ order, onOpen }) {
+  const status = STATUS_STYLES[order.orderStatus] || STATUS_STYLES.processing;
+  const items = order.OrderItems || [];
+  const previewItems = items.slice(0, 3);
+  const extraCount = items.length - previewItems.length;
+  const isCancelled = order.orderStatus === 'cancelled';
+
+  return (
+    <button
+      onClick={() => onOpen(order._id)}
+      className={`w-full text-left bg-surface border border-border-line hover:border-teal/40 rounded-2xl p-5 transition-colors ${
+        isCancelled ? 'opacity-60' : ''
+      }`}
+    >
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+          <p className="text-text-primary font-semibold text-sm">
+            Order #{String(order._id).padStart(8, '0')}
+          </p>
+          <p className="text-text-muted text-xs mt-0.5">
+            {new Date(order.createdAt).toLocaleDateString('en-IN', {
+              day: 'numeric', month: 'short', year: 'numeric',
+            })}
+            {' · '}
+            {items.length} item{items.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${status.className}`}>
+          {status.label}
+        </span>
+      </div>
+
+      {isCancelled && (
+        <div className="flex items-start gap-2 bg-rose-500/5 border border-rose-500/20 rounded-lg px-3 py-2.5 mb-3">
+          <span className="text-rose-400 text-sm mt-0.5">↩</span>
+          <p className="text-rose-300/90 text-xs leading-relaxed">
+            Your full payment will be refunded to your original payment method within 2–3 business days, if eligible.
+          </p>
+        </div>
+      )}
+
+      <div className="space-y-2 mb-3">
+        {previewItems.map((item, i) => (
+          <div key={i} className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-surface-hover rounded-lg overflow-hidden shrink-0">
+              {item.image && (
+                <img
+                  src={item.image}
+                  alt={item.name}
+                  loading="lazy"
+                  decoding="async"
+                  className="w-full h-full object-cover"
+                />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-text-primary text-sm font-medium truncate">{item.name}</p>
+              <p className="text-text-muted text-xs">
+                Qty: {item.quantity} × ₹{Number(item.price).toLocaleString('en-IN')}
+              </p>
+            </div>
+            <p className="text-text-primary text-sm font-semibold shrink-0">
+              ₹{(item.price * item.quantity).toLocaleString('en-IN')}
+            </p>
+          </div>
+        ))}
+        {extraCount > 0 && (
+          <p className="text-text-muted text-xs pl-[60px]">
+            +{extraCount} more item{extraCount !== 1 ? 's' : ''}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between pt-3 border-t border-border-line">
+        <span className="font-display text-text-primary font-bold">
+          ₹{order.totalPrice.toLocaleString('en-IN')}
+        </span>
+        <span className="flex items-center gap-1 text-teal text-xs font-medium">
+          View details <ChevronRight className="w-3.5 h-3.5" />
+        </span>
+      </div>
+    </button>
+  );
+});
+
 function AllOrders() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -30,7 +120,7 @@ function AllOrders() {
   const [searchQuery, setSearchQuery] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  const fetchOrders = async (isManualRefresh = false) => {
+  const fetchOrders = useCallback(async (isManualRefresh = false) => {
     if (isManualRefresh) setRefreshing(true);
     setError('');
     try {
@@ -43,37 +133,53 @@ function AllOrders() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
     fetchOrders();
-  }, [user]);
+  }, [user, fetchOrders]);
 
-  const paidOrders = orders.filter((o) => o.paymentStatus === 'paid');
+  // Stable identity for OrderCard's onOpen prop, and navigate() is stable
+  // from react-router — so OrderCard's memo() actually holds.
+  const handleOpenOrder = useCallback((orderId) => {
+    navigate(`/order-success/${orderId}`);
+  }, [navigate]);
 
-  const statusCounts = paidOrders.reduce((acc, o) => {
-    acc[o.orderStatus] = (acc[o.orderStatus] || 0) + 1;
-    return acc;
-  }, {});
+  // paidOrders / statusCounts / filteredOrders were recomputed on every
+  // render before (including on every keystroke, since they weren't
+  // memoized). useMemo means they only recompute when orders, the
+  // filter, or the search term actually change.
+  const paidOrders = useMemo(
+    () => orders.filter((o) => o.paymentStatus === 'paid'),
+    [orders]
+  );
 
-  const filteredOrders = paidOrders
-    .filter((o) => statusFilter === 'all' || o.orderStatus === statusFilter)
-    .filter((o) => {
-      if (!searchQuery) return true;
-      const query = searchQuery.toLowerCase();
-      const idMatch = String(o._id).toLowerCase().includes(query);
-      const itemMatch = (o.OrderItems || []).some((item) => item.name.toLowerCase().includes(query));
+  const statusCounts = useMemo(() => {
+    return paidOrders.reduce((acc, o) => {
+      acc[o.orderStatus] = (acc[o.orderStatus] || 0) + 1;
+      return acc;
+    }, {});
+  }, [paidOrders]);
+
+  const filteredOrders = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return paidOrders.filter((o) => {
+      if (statusFilter !== 'all' && o.orderStatus !== statusFilter) return false;
+      if (!q) return true;
+      const idMatch = String(o._id).toLowerCase().includes(q);
+      const itemMatch = (o.OrderItems || []).some((item) => item.name.toLowerCase().includes(q));
       return idMatch || itemMatch;
     });
+  }, [paidOrders, statusFilter, searchQuery]);
 
-  const statusTabs = [
+  const statusTabs = useMemo(() => ([
     { key: 'all', label: 'All', count: paidOrders.length },
     { key: 'processing', label: 'Processing', count: statusCounts.processing || 0 },
     { key: 'shipped', label: 'Shipped', count: statusCounts.shipped || 0 },
     { key: 'delivered', label: 'Delivered', count: statusCounts.delivered || 0 },
     { key: 'cancelled', label: 'Cancelled', count: statusCounts.cancelled || 0 },
-  ];
+  ]), [paidOrders.length, statusCounts]);
 
   if (!user) {
     return (
@@ -167,83 +273,9 @@ function AllOrders() {
         )}
 
         <div className="space-y-3">
-          {filteredOrders.map((order) => {
-            const status = STATUS_STYLES[order.orderStatus] || STATUS_STYLES.processing;
-            const items = order.OrderItems || [];
-            const previewItems = items.slice(0, 3);
-            const extraCount = items.length - previewItems.length;
-            const isCancelled = order.orderStatus === 'cancelled';
-
-            return (
-              <button
-                key={order._id}
-                onClick={() => navigate(`/order-success/${order._id}`)}
-                className={`w-full text-left bg-surface border border-border-line hover:border-teal/40 rounded-2xl p-5 transition-colors ${
-                  isCancelled ? 'opacity-60' : ''
-                }`}
-              >
-                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                  <div>
-                    <p className="text-text-primary font-semibold text-sm">
-                      Order #{String(order._id).padStart(8, '0')}
-                    </p>
-                    <p className="text-text-muted text-xs mt-0.5">
-                      {new Date(order.createdAt).toLocaleDateString('en-IN', {
-                        day: 'numeric', month: 'short', year: 'numeric',
-                      })}
-                      {' · '}
-                      {items.length} item{items.length !== 1 ? 's' : ''}
-                    </p>
-                  </div>
-                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${status.className}`}>
-                    {status.label}
-                  </span>
-                </div>
-
-                {isCancelled && (
-                  <div className="flex items-start gap-2 bg-rose-500/5 border border-rose-500/20 rounded-lg px-3 py-2.5 mb-3">
-                    <span className="text-rose-400 text-sm mt-0.5">↩</span>
-                    <p className="text-rose-300/90 text-xs leading-relaxed">
-                      Your full payment will be refunded to your original payment method within 2–3 business days, if eligible.
-                    </p>
-                  </div>
-                )}
-
-                <div className="space-y-2 mb-3">
-                  {previewItems.map((item, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-surface-hover rounded-lg overflow-hidden shrink-0">
-                        {item.image && <img src={item.image} alt={item.name} className="w-full h-full object-cover" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-text-primary text-sm font-medium truncate">{item.name}</p>
-                        <p className="text-text-muted text-xs">
-                          Qty: {item.quantity} × ₹{Number(item.price).toLocaleString('en-IN')}
-                        </p>
-                      </div>
-                      <p className="text-text-primary text-sm font-semibold shrink-0">
-                        ₹{(item.price * item.quantity).toLocaleString('en-IN')}
-                      </p>
-                    </div>
-                  ))}
-                  {extraCount > 0 && (
-                    <p className="text-text-muted text-xs pl-[60px]">
-                      +{extraCount} more item{extraCount !== 1 ? 's' : ''}
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex items-center justify-between pt-3 border-t border-border-line">
-                  <span className="font-display text-text-primary font-bold">
-                    ₹{order.totalPrice.toLocaleString('en-IN')}
-                  </span>
-                  <span className="flex items-center gap-1 text-teal text-xs font-medium">
-                    View details <ChevronRight className="w-3.5 h-3.5" />
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+          {filteredOrders.map((order) => (
+            <OrderCard key={order._id} order={order} onOpen={handleOpenOrder} />
+          ))}
         </div>
       </div>
     </div>

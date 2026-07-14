@@ -1,14 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getProducts } from '../api/productApi';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import {
-  Headphones, Cpu, Smartphone, Watch, Cable, Gamepad2,
-  SlidersHorizontal, ChevronDown, X, Laptop, Camera,
-  ChevronLeft, ChevronRight, Star, Heart, Package, Zap, ShieldCheck,
+  Headphones, Smartphone, Watch, Laptop, Camera,
+  SlidersHorizontal, ChevronDown, X, Star, Heart, Package, Zap,
   Loader2, Check,
 } from 'lucide-react';
+
+/* ------------------------------------------------------------------ */
+/* Global keyframes — defined ONCE for the whole page, not per-card.   */
+/* Previously every ProductCard + HeroCarousel injected its own        */
+/* <style> block, so 20 products = 20 duplicate <style> tags in the    */
+/* DOM re-parsed on every render. This single block covers all of it.  */
+/* ------------------------------------------------------------------ */
+function GlobalKeyframes() {
+  return (
+    <style>{`
+      @keyframes slideInRight { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
+      @keyframes slideInLeft { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: translateX(0); } }
+      @keyframes fillBar { from { width: 0%; } to { width: 100%; } }
+      @keyframes shimmer { 100% { transform: translateX(100%); } }
+      @keyframes panelIn { from { opacity: 0; transform: scale(0.97) translateY(-4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+      @keyframes addBounce { 0% { transform: scale(1); } 35% { transform: scale(1.06); } 100% { transform: scale(1); } }
+      @keyframes checkPop { 0% { transform: scale(0.4) rotate(-10deg); opacity: 0; } 60% { transform: scale(1.15) rotate(4deg); opacity: 1; } 100% { transform: scale(1) rotate(0deg); opacity: 1; } }
+      @keyframes flashFade { 0% { opacity: 0.9; } 100% { opacity: 0; } }
+    `}</style>
+  );
+}
 
 function resolveImageSrc(src) {
   if (!src) return null;
@@ -17,7 +37,9 @@ function resolveImageSrc(src) {
   return null;
 }
 
-function ProductImage({ src, alt }) {
+/* ProductImage is memoized: with a stable `src` string it won't
+   re-render just because a sibling state (wishlist, cart) changed. */
+const ProductImage = memo(function ProductImage({ src, alt }) {
   const resolvedSrc = resolveImageSrc(src);
   const imgRef = useRef(null);
   const [status, setStatus] = useState(resolvedSrc ? 'loading' : 'empty');
@@ -63,6 +85,8 @@ function ProductImage({ src, alt }) {
         ref={imgRef}
         src={resolvedSrc}
         alt={alt}
+        loading="lazy"
+        decoding="async"
         onLoad={() => setStatus('loaded')}
         onError={() => setStatus('error')}
         className={`h-full w-full object-cover transition-[opacity,transform] duration-700 ease-out group-hover:scale-[1.06] ${
@@ -71,9 +95,9 @@ function ProductImage({ src, alt }) {
       />
     </>
   );
-}
+});
 
-function StarRating({ value = 0, size = 12 }) {
+const StarRating = memo(function StarRating({ value = 0, size = 12 }) {
   const pct = Math.max(0, Math.min(5, value)) / 5 * 100;
   const gap = 2;
   const width = size * 5 + gap * 4;
@@ -94,16 +118,16 @@ function StarRating({ value = 0, size = 12 }) {
       </span>
     </span>
   );
-}
+});
 
 function HeroCarousel() {
-  const slides = [
+  const slides = useMemo(() => ([
     { Icon: Headphones, tag: 'Audio', title: 'Sound that moves with you.', subtitle: 'Premium headphones and speakers.' },
     { Icon: Laptop, tag: 'Computing', title: 'Power for what you build.', subtitle: 'Monitors, peripherals, and gear for serious workstations.' },
     { Icon: Smartphone, tag: 'Mobile', title: 'Stay charged, stay connected.', subtitle: 'Chargers, stands, and accessories that just work.' },
     { Icon: Watch, tag: 'Wearables', title: 'Wear your next upgrade.', subtitle: 'Smartwatches and fitness tech with real specs.' },
     { Icon: Camera, tag: 'Gear', title: 'Capture it properly.', subtitle: 'Cameras and accessories for creators who care about quality.' },
-  ];
+  ]), []);
 
   const [index, setIndex] = useState(0);
   const [direction, setDirection] = useState(1);
@@ -169,13 +193,6 @@ function HeroCarousel() {
           ))}
         </div>
       </div>
-
-      <style>{`
-        @keyframes slideInRight { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
-        @keyframes slideInLeft { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: translateX(0); } }
-        @keyframes fillBar { from { width: 0%; } to { width: 100%; } }
-        @keyframes shimmer { 100% { transform: translateX(100%); } }
-      `}</style>
     </section>
   );
 }
@@ -211,7 +228,11 @@ function AddToCartButton({ isAdding, justAdded, onClick }) {
   );
 }
 
-function ProductCard({ product, isWishlisted, justAdded, isAdding, cartError, onNavigate, onToggleWishlist, onAddToCart, onBuyNow }) {
+
+const ProductCard = memo(function ProductCard({
+  product, isWishlisted, justAdded, isAdding, cartError,
+  onNavigate, onToggleWishlist, onAddToCart, onBuyNow,
+}) {
   const hasDiscount = product.discountPrice && product.discountPrice < product.price;
   const discountPct = hasDiscount
     ? Math.round(((product.price - product.discountPrice) / product.price) * 100)
@@ -220,16 +241,17 @@ function ProductCard({ product, isWishlisted, justAdded, isAdding, cartError, on
   const reviewCount = product.ratingsCount || 0;
   const isLowStock = product.stock > 0 && product.stock <= 5;
   const isOutOfStock = product.stock === 0;
+  const imgSrc = resolveImageSrc(product.images?.[0]);
 
   return (
     <div
-      onClick={onNavigate}
+      onClick={() => onNavigate(product.id)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onNavigate();
+          onNavigate(product.id);
         }
       }}
       className={`group relative bg-graphite rounded-2xl overflow-hidden cursor-pointer
@@ -294,9 +316,15 @@ function ProductCard({ product, isWishlisted, justAdded, isAdding, cartError, on
       </div>
 
       <div className="relative p-5 bg-surface/40 backdrop-blur-xl border-t border-white/[0.06] overflow-hidden">
-        <div className="absolute inset-0 -z-10 opacity-40 scale-110">
-          <ProductImage src={product.images?.[0]} alt="" />
-        </div>
+        {/* CSS-only blurred backdrop — reuses the already-downloaded image
+            via `background-image`, no second <img>/component mount. */}
+        {imgSrc && (
+          <div
+            className="absolute inset-0 -z-10 opacity-40 scale-110 bg-cover bg-center blur-md"
+            style={{ backgroundImage: `url(${imgSrc})` }}
+            aria-hidden="true"
+          />
+        )}
         <div className="absolute inset-0 -z-10 bg-gradient-to-b from-surface/30 via-surface/70 to-surface/90" />
 
         <div className="flex items-center justify-between gap-2 mb-2">
@@ -371,15 +399,9 @@ function ProductCard({ product, isWishlisted, justAdded, isAdding, cartError, on
       </div>
 
       <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-teal/0 via-teal to-teal/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-
-      <style>{`
-        @keyframes addBounce { 0% { transform: scale(1); } 35% { transform: scale(1.06); } 100% { transform: scale(1); } }
-        @keyframes checkPop { 0% { transform: scale(0.4) rotate(-10deg); opacity: 0; } 60% { transform: scale(1.15) rotate(4deg); opacity: 1; } 100% { transform: scale(1) rotate(0deg); opacity: 1; } }
-        @keyframes flashFade { 0% { opacity: 0.9; } 100% { opacity: 0; } }
-      `}</style>
     </div>
   );
-}
+});
 
 function Home({ searchQuery = '' }) {
   const [products, setProducts] = useState([]);
@@ -454,37 +476,46 @@ function Home({ searchQuery = '' }) {
   const activeFilterCount =
     (priceRange.min ? 1 : 0) + (priceRange.max ? 1 : 0) + selectedBrands.length + (minRating > 0 ? 1 : 0);
 
-  const toggleBrand = (brand) => {
+  const toggleBrand = useCallback((brand) => {
     setSelectedBrands((prev) =>
       prev.includes(brand) ? prev.filter((b) => b !== brand) : [...prev, brand]
     );
-  };
+  }, []);
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setPriceRange({ min: '', max: '' });
     setSelectedBrands([]);
     setMinRating(0);
     setSortBy('newest');
-  };
+  }, []);
 
-  const toggleWishlist = (id) => {
+  /* Stable callback identities — required for React.memo on ProductCard
+     to actually skip re-renders. Each uses functional state updates so
+     it never needs to depend on `wishlist`/`cartErrors` etc. */
+  const toggleWishlist = useCallback((id) => {
     setWishlist((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  };
+  }, []);
 
-  const handleAddToCart = async (id) => {
+  const handleNavigate = useCallback((id) => {
+    navigate(`/products/${id}`);
+  }, [navigate]);
+
+  const handleAddToCart = useCallback(async (id) => {
     if (!user) {
       navigate('/login', { state: { from: '/' } });
       return;
     }
 
-    if (pendingAddIds.has(id)) return;
+    setPendingAddIds((prevPending) => {
+      if (prevPending.has(id)) return prevPending;
+      return new Set(prevPending).add(id);
+    });
 
     setCartErrors((prev) => ({ ...prev, [id]: null }));
-    setPendingAddIds((prev) => new Set(prev).add(id));
 
     try {
       await addItem(id, 1);
@@ -506,18 +537,20 @@ function Home({ searchQuery = '' }) {
         return next;
       });
     }
-  };
+  }, [user, navigate, addItem]);
 
-  const handleBuyNow = async (id) => {
+  const handleBuyNow = useCallback(async (id) => {
     if (!user) {
       navigate('/login', { state: { from: '/' } });
       return;
     }
 
-    if (pendingAddIds.has(id)) return;
+    setPendingAddIds((prevPending) => {
+      if (prevPending.has(id)) return prevPending;
+      return new Set(prevPending).add(id);
+    });
 
     setCartErrors((prev) => ({ ...prev, [id]: null }));
-    setPendingAddIds((prev) => new Set(prev).add(id));
 
     try {
       await addItem(id, 1);
@@ -534,31 +567,40 @@ function Home({ searchQuery = '' }) {
         return next;
       });
     }
-  };
+  }, [user, navigate, addItem]);
 
+  /* Single-pass filter instead of 6 chained .filter() calls —
+     each product is now visited once instead of 6 times. */
   const filteredProducts = useMemo(() => {
-    let result = products
-      .filter((p) => category === 'all' || p.category === category)
-      .filter((p) => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
-      .filter((p) => !priceRange.min || p.price >= Number(priceRange.min))
-      .filter((p) => !priceRange.max || p.price <= Number(priceRange.max))
-      .filter((p) => selectedBrands.length === 0 || selectedBrands.includes(p.brand))
-      .filter((p) => (p.ratingsAverage || 0) >= minRating);
+    const q = searchQuery.toLowerCase();
+    const min = priceRange.min ? Number(priceRange.min) : null;
+    const max = priceRange.max ? Number(priceRange.max) : null;
+
+    const result = products.filter((p) => {
+      if (category !== 'all' && p.category !== category) return false;
+      if (q && !p.name.toLowerCase().includes(q)) return false;
+      if (min !== null && p.price < min) return false;
+      if (max !== null && p.price > max) return false;
+      if (selectedBrands.length > 0 && !selectedBrands.includes(p.brand)) return false;
+      if ((p.ratingsAverage || 0) < minRating) return false;
+      return true;
+    });
 
     if (sortBy === 'price-low') {
-      result = [...result].sort((a, b) => a.price - b.price);
+      result.sort((a, b) => a.price - b.price);
     } else if (sortBy === 'price-high') {
-      result = [...result].sort((a, b) => b.price - a.price);
+      result.sort((a, b) => b.price - a.price);
     } else if (sortBy === 'rating') {
-      result = [...result].sort((a, b) => (b.ratingsAverage || 0) - (a.ratingsAverage || 0));
+      result.sort((a, b) => (b.ratingsAverage || 0) - (a.ratingsAverage || 0));
     } else {
-      result = [...result].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      result.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
     }
     return result;
   }, [products, category, searchQuery, priceRange, selectedBrands, minRating, sortBy]);
 
   return (
     <div className="min-h-screen bg-graphite">
+      <GlobalKeyframes />
       <HeroCarousel />
 
       <section className="px-6 py-12">
@@ -758,7 +800,7 @@ function Home({ searchQuery = '' }) {
               justAdded={addedId === product.id}
               isAdding={pendingAddIds.has(product.id)}
               cartError={cartErrors[product.id]}
-              onNavigate={() => navigate(`/products/${product.id}`)}
+              onNavigate={handleNavigate}
               onToggleWishlist={toggleWishlist}
               onAddToCart={handleAddToCart}
               onBuyNow={handleBuyNow}
@@ -766,11 +808,6 @@ function Home({ searchQuery = '' }) {
           ))}
         </div>
       </section>
-
-      <style>{`
-        @keyframes panelIn { from { opacity: 0; transform: scale(0.97) translateY(-4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-        @keyframes shimmer { 100% { transform: translateX(100%); } }
-      `}</style>
     </div>
   );
 }

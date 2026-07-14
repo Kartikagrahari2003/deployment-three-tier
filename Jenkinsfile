@@ -2,9 +2,9 @@ pipeline{
     agent { label 'electronix'}
 
     environment{
-        S3_BUCKET='electronix-production-2026'
-        CLOUDFRONT_ID='E1BODMCXENV2E0'
-        AWS_REGION='us-east-1'
+        S3_BUCKET='terraform-in-one-shot2003'
+        CLOUDFRONT_ID=E35OG02Q367R3C'
+        AWS_REGION='ap-south-2'
     }
 
     stages{
